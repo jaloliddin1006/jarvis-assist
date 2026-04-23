@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TTS — Mini Jarvis</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    .audio-player-card {
+      background: linear-gradient(135deg, #EEF2FF 0%, #FDF2F8 100%);
+      border-radius: 16px; padding: 1.5rem;
+      margin-top: 1.2rem; display: none;
+      animation: fadeSlideUp .4s ease;
+    }
+    .audio-player-card.visible { display: block; }
+    .audio-player-card audio { width: 100%; margin-top: .5rem; }
+    .audio-title { font-weight: 700; font-size: .9rem; color: var(--primary); margin-bottom: .3rem; }
+
+    .speaker-card {
+      display: flex; flex-direction: column; align-items: center; gap: .3rem;
+      padding: .7rem 1rem; border-radius: 14px;
+      border: 2px solid var(--border); background: var(--surface);
+      cursor: pointer; transition: var(--transition); min-width: 80px;
+    }
+    .speaker-card .sp-icon { font-size: 1.8rem; }
+    .speaker-card .sp-name { font-size: .75rem; font-weight: 600; color: var(--text-m); }
+    .speaker-card:hover { border-color: var(--accent); background: #ECFDF5; }
+    .speaker-card.active { border-color: var(--accent); background: var(--accent); }
+    .speaker-card.active .sp-name { color: #fff; }
+
+    .synth-btn-wrap { display: flex; align-items: center; gap: 1rem; margin-top: 1rem; }
+
+    .history-item {
+      display: flex; align-items: center; gap: .8rem;
+      padding: .75rem 1rem; background: #FAFBFF;
+      border: 1px solid var(--border); border-radius: 10px;
+      margin-bottom: .5rem; transition: var(--transition);
+    }
+    .history-item:hover { background: #EEF2FF; }
+    .history-text { flex: 1; font-size: .88rem; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .history-play {
+      background: var(--primary); color: #fff; border: none;
+      border-radius: 50%; width: 32px; height: 32px;
+      cursor: pointer; font-size: .9rem; transition: var(--transition);
+    }
+    .history-play:hover { background: #3730A3; transform: scale(1.1); }
+  </style>
+</head>
+<body>
+  <div class="blob-bg">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <nav class="navbar">
+    <a href="/" class="nav-brand">🎙 Mini Jarvis</a>
+    <div class="nav-links">
+      <a href="/"    class="nav-link">Home</a>
+      <a href="/stt" class="nav-link">STT</a>
+      <a href="/tts" class="nav-link active">TTS</a>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="fade-in">
+      <div class="section-title">🔊 Text to Speech</div>
+      <p class="section-sub">Type your text, choose a language and speaker voice, then synthesize.</p>
+    </div>
+
+    <!-- Language Picker -->
+    <div class="card fade-in" style="margin-bottom:1.2rem;">
+      <div class="field-label">Language</div>
+      <div class="lang-grid" id="langGrid">
+        {% for code, lang in languages.items() %}
+        <button class="lang-btn {% if code == 'en' %}active{% endif %}"
+                data-lang="{{ code }}"
+                data-has-tts="{{ 'true' if lang.tts_model else 'false' }}"
+                onclick="selectLang(this)">
+          <span class="flag">{{ lang.flag }}</span> {{ lang.name }}
+          {% if not lang.tts_model %}<span style="font-size:.7rem;opacity:.6">(STT only)</span>{% endif %}
+        </button>
+        {% endfor %}
+      </div>
+
+      <div id="modelStatus" class="flex-row">
+        <span class="badge badge-yellow" id="statusBadge">⏳ Checking…</span>
+        <button class="btn btn-primary hidden" id="downloadBtn" onclick="downloadModel()">
+          ⬇ Download TTS Model
+        </button>
+        <span class="badge badge-red hidden" id="noTTSBadge">✗ TTS not available for this language</span>
+      </div>
+
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-outer"><div class="progress-bar-inner" id="progressBar"></div></div>
+        <div class="progress-msg" id="progressMsg">Starting…</div>
+      </div>
+    </div>
+
+    <!-- Speaker Picker (shown when speakers available) -->
+    <div class="card fade-in" id="speakerCard" style="margin-bottom:1.2rem; display:none;">
+      <div class="field-label">Speaker Voice</div>
+      <div id="speakerGrid" style="display:flex; flex-wrap:wrap; gap:.6rem; margin-top:.5rem;"></div>
+    </div>
+
+    <!-- Text Input -->
+    <div class="card fade-in">
+      <div class="field-label">Text to Synthesize</div>
+      <textarea id="ttsText" rows="5" maxlength="1000"
+        placeholder="Enter text here…"
+        oninput="updateCharCount()"></textarea>
+      <div class="char-count"><span id="charCount">0</span> / 1000</div>
+
+      <div class="synth-btn-wrap">
+        <button class="btn btn-primary" id="synthBtn" onclick="synthesize()" disabled>
+          ▶ Synthesize
+        </button>
+        <div class="spinner hidden" id="synthSpinner"></div>
+        <button class="btn btn-secondary" onclick="clearAll()">🗑 Clear</button>
+      </div>
+
+      <!-- Audio Player -->
+      <div class="audio-player-card" id="audioCard">
+        <div class="audio-title">🎵 Output Audio</div>
+        <audio id="audioPlayer" controls></audio>
+        <div class="flex-row mt-2">
+          <a id="downloadLink" class="btn btn-secondary" style="font-size:.85rem;" download>
+            ⬇ Download WAV
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="card fade-in mt-3" id="historyCard" style="display:none;">
+      <div class="field-label" style="margin-bottom:.8rem;">Recent Synthesized</div>
+      <div id="historyList"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────
+    let currentLang = 'en';
+    let currentSpeaker = 0;
+    let modelReady = false;
+    let downloadTaskId = null;
+    let pollInterval = null;
+    let history = [];
+
+    // ── Language selection ─────────────────────────────────────────────
+    function selectLang(btn) {
+      document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentLang = btn.dataset.lang;
+      const hasTTS = btn.dataset.hasTts === 'true';
+      document.getElementById('noTTSBadge').classList.toggle('hidden', hasTTS);
+      if (!hasTTS) {
+        document.getElementById('statusBadge').classList.add('hidden');
+        document.getElementById('downloadBtn').classList.add('hidden');
+        document.getElementById('speakerCard').style.display = 'none';
+        modelReady = false;
+        document.getElementById('synthBtn').disabled = true;
+        return;
+      }
+      document.getElementById('statusBadge').classList.remove('hidden');
+      checkModel();
+    }
+
+    // ── Model check & download ─────────────────────────────────────────
+    async function checkModel() {
+      const badge = document.getElementById('statusBadge');
+      const dlBtn = document.getElementById('downloadBtn');
+      badge.className = 'badge badge-yellow';
+      badge.textContent = '⏳ Checking…';
+      dlBtn.classList.add('hidden');
+      modelReady = false;
+      document.getElementById('synthBtn').disabled = true;
+      document.getElementById('speakerCard').style.display = 'none';
+
+      const r = await fetch(`/api/model/check?lang=${currentLang}&type=tts`);
+      const data = await r.json();
+
+      if (!data.available) {
+        badge.className = 'badge badge-red';
+        badge.textContent = '✗ Not supported';
+        return;
+      }
+      if (data.downloaded) {
+        badge.className = 'badge badge-green';
+        badge.textContent = '✓ Model ready';
+        modelReady = true;
+        document.getElementById('synthBtn').disabled = false;
+        buildSpeakerGrid(data.speakers || {});
+      } else {
+        badge.className = 'badge badge-yellow';
+        badge.textContent = '⬇ Not downloaded';
+        dlBtn.classList.remove('hidden');
+      }
+    }
+
+    async function downloadModel() {
+      const r = await fetch('/api/model/download', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({lang: currentLang, type: 'tts'})
+      });
+      const data = await r.json();
+      if (data.status === 'already_downloaded') { checkModel(); return; }
+      if (data.task_id) {
+        downloadTaskId = data.task_id;
+        document.getElementById('progressWrap').classList.add('visible');
+        document.getElementById('downloadBtn').classList.add('hidden');
+        pollInterval = setInterval(pollProgress, 800);
+      }
+    }
+
+    async function pollProgress() {
+      const r = await fetch(`/api/model/progress/${downloadTaskId}`);
+      const data = await r.json();
+      document.getElementById('progressBar').style.width = data.progress + '%';
+      document.getElementById('progressMsg').textContent = data.message;
+      if (data.status === 'done') {
+        clearInterval(pollInterval);
+        setTimeout(() => {
+          document.getElementById('progressWrap').classList.remove('visible');
+          checkModel();
+        }, 1000);
+      }
+      if (data.status === 'error') {
+        clearInterval(pollInterval);
+        showToast('Download failed: ' + data.message);
+      }
+    }
+
+    // ── Speaker grid ───────────────────────────────────────────────────
+    const SPEAKER_ICONS = ['👨','👩','👩‍🦰','👱‍♀️','🧔'];
+
+    function buildSpeakerGrid(speakers) {
+      const grid = document.getElementById('speakerGrid');
+      grid.innerHTML = '';
+      const keys = Object.keys(speakers);
+      if (keys.length === 0) {
+        document.getElementById('speakerCard').style.display = 'none';
+        return;
+      }
+      document.getElementById('speakerCard').style.display = 'block';
+      keys.forEach((id, i) => {
+        const btn = document.createElement('div');
+        btn.className = 'speaker-card' + (parseInt(id) === currentSpeaker ? ' active' : '');
+        btn.innerHTML = `<span class="sp-icon">${SPEAKER_ICONS[i % SPEAKER_ICONS.length]}</span><span class="sp-name">${speakers[id]}</span>`;
+        btn.onclick = () => {
+          document.querySelectorAll('.speaker-card').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          currentSpeaker = parseInt(id);
+        };
+        grid.appendChild(btn);
+      });
+      // default first speaker
+      currentSpeaker = parseInt(keys[0]);
+    }
+
+    // ── Text counter ───────────────────────────────────────────────────
+    function updateCharCount() {
+      const len = document.getElementById('ttsText').value.length;
+      document.getElementById('charCount').textContent = len;
+    }
+
+    // ── Synthesize ─────────────────────────────────────────────────────
+    async function synthesize() {
+      const text = document.getElementById('ttsText').value.trim();
+      if (!text) { showToast('Please enter some text.'); return; }
+      if (!modelReady) { showToast('Model not ready.'); return; }
+
+      const btn = document.getElementById('synthBtn');
+      const spinner = document.getElementById('synthSpinner');
+      btn.disabled = true;
+      spinner.classList.remove('hidden');
+
+      try {
+        const r = await fetch('/api/tts/synthesize', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ text, lang: currentLang, speaker_id: currentSpeaker })
+        });
+        const data = await r.json();
+        if (!r.ok) { showToast('Error: ' + data.detail); return; }
+
+        const audioCard = document.getElementById('audioCard');
+        const player = document.getElementById('audioPlayer');
+        const dlLink = document.getElementById('downloadLink');
+
+        player.src = data.audio_url + '?t=' + Date.now();
+        dlLink.href = data.audio_url;
+        dlLink.download = 'speech.wav';
+        audioCard.classList.add('visible');
+        player.play();
+
+        addHistory(text, data.audio_url);
+      } catch(e) {
+        showToast('Request failed.');
+      } finally {
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+      }
+    }
+
+    // ── History ────────────────────────────────────────────────────────
+    function addHistory(text, url) {
+      history.unshift({ text, url });
+      if (history.length > 10) history.pop();
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const card = document.getElementById('historyCard');
+      const list = document.getElementById('historyList');
+      if (history.length === 0) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
+      list.innerHTML = '';
+      history.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        div.innerHTML = `
+          <span class="history-text" title="${item.text}">${item.text}</span>
+          <button class="history-play" onclick="playAudio('${item.url}')">▶</button>
+        `;
+        list.appendChild(div);
+      });
+    }
+
+    function playAudio(url) {
+      const player = document.getElementById('audioPlayer');
+      document.getElementById('audioCard').classList.add('visible');
+      player.src = url + '?t=' + Date.now();
+      player.play();
+    }
+
+    // ── Clear ──────────────────────────────────────────────────────────
+    function clearAll() {
+      document.getElementById('ttsText').value = '';
+      updateCharCount();
+      document.getElementById('audioCard').classList.remove('visible');
+    }
+
+    // ── Toast ──────────────────────────────────────────────────────────
+    let toastTimeout;
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────
+    checkModel();
+  </script>
+</body>
+</html>

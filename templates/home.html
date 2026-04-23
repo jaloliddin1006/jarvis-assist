@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mini Jarvis</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    .hero {
+      text-align: center;
+      padding: 5rem 1rem 3rem;
+    }
+    .hero-logo {
+      font-size: 4rem;
+      animation: logoBounce 3s ease-in-out infinite;
+      display: inline-block;
+      margin-bottom: 1rem;
+    }
+    @keyframes logoBounce {
+      0%,100% { transform: translateY(0) rotate(-3deg); }
+      50%      { transform: translateY(-12px) rotate(3deg); }
+    }
+    .hero-title {
+      font-size: clamp(2.4rem, 5vw, 3.4rem);
+      font-weight: 900;
+      background: linear-gradient(135deg, #4F46E5, #EC4899, #10B981);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-size: 200% auto;
+      animation: gradientShift 4s ease infinite;
+      line-height: 1.2;
+      margin-bottom: .75rem;
+    }
+    @keyframes gradientShift {
+      0%   { background-position: 0% center; }
+      50%  { background-position: 100% center; }
+      100% { background-position: 0% center; }
+    }
+    .hero-sub {
+      font-size: 1.15rem; color: #6B7280; max-width: 520px;
+      margin: 0 auto 2.5rem;
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 1.5rem;
+      margin-top: 1rem;
+    }
+    .feature-card {
+      background: var(--surface);
+      border-radius: 20px;
+      padding: 2.2rem 1.8rem;
+      box-shadow: 0 4px 30px rgba(79,70,229,.1);
+      border: 1px solid rgba(255,255,255,.9);
+      text-align: center;
+      text-decoration: none;
+      color: var(--text);
+      display: block;
+      transition: transform .3s cubic-bezier(.4,0,.2,1),
+                  box-shadow .3s cubic-bezier(.4,0,.2,1);
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      transition: opacity .3s;
+    }
+    .feature-card.stt::before { background: linear-gradient(135deg,rgba(79,70,229,.06),rgba(124,58,237,.06)); }
+    .feature-card.tts::before { background: linear-gradient(135deg,rgba(236,72,153,.06),rgba(245,158,11,.06)); }
+    .feature-card:hover { transform: translateY(-6px); box-shadow: 0 12px 40px rgba(79,70,229,.2); }
+    .feature-card:hover::before { opacity: 1; }
+    .feature-icon {
+      font-size: 3.5rem;
+      display: inline-block;
+      margin-bottom: 1rem;
+      transition: transform .3s;
+    }
+    .feature-card:hover .feature-icon { transform: scale(1.15) rotate(-5deg); }
+    .feature-card h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: .5rem; }
+    .feature-card.stt h2 { color: #4F46E5; }
+    .feature-card.tts h2 { color: #EC4899; }
+    .feature-card p { color: #6B7280; font-size: .95rem; line-height: 1.6; }
+    .feature-arrow {
+      display: inline-flex; align-items: center; justify-content: center;
+      margin-top: 1.2rem;
+      width: 42px; height: 42px; border-radius: 50%;
+      font-size: 1.2rem;
+      transition: transform .25s;
+    }
+    .feature-card.stt .feature-arrow { background: #EEF2FF; color: #4F46E5; }
+    .feature-card.tts .feature-arrow { background: #FDF2F8; color: #EC4899; }
+    .feature-card:hover .feature-arrow { transform: translateX(5px); }
+
+    .stats-row {
+      display: flex; justify-content: center; gap: 3rem;
+      margin: 3rem 0 1rem; flex-wrap: wrap;
+    }
+    .stat { text-align: center; }
+    .stat-num {
+      font-size: 2rem; font-weight: 900;
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .stat-label { font-size: .82rem; color: var(--text-m); font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="blob-bg">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <nav class="navbar">
+    <a href="/" class="nav-brand">🎙 Mini Jarvis</a>
+    <div class="nav-links">
+      <a href="/"   class="nav-link active">Home</a>
+      <a href="/stt" class="nav-link">STT</a>
+      <a href="/tts" class="nav-link">TTS</a>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="hero fade-in">
+      <div class="hero-logo">🤖</div>
+      <h1 class="hero-title">Mini Jarvis</h1>
+      <p class="hero-sub">
+        Offline speech recognition and synthesis — powered by Vosk.
+        Supports {{ languages | length }} languages, no cloud required.
+      </p>
+    </div>
+
+    <div class="stats-row fade-in">
+      <div class="stat">
+        <div class="stat-num">{{ languages | length }}</div>
+        <div class="stat-label">Languages</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">100%</div>
+        <div class="stat-label">Offline</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">5</div>
+        <div class="stat-label">TTS Speakers (RU)</div>
+      </div>
+    </div>
+
+    <div class="feature-grid fade-in">
+      <a href="/stt" class="feature-card stt">
+        <div class="feature-icon">🎤</div>
+        <h2>Speech to Text</h2>
+        <p>Record from your microphone in real-time or upload an audio file.
+           Supports WAV, MP3, OGG and more (requires ffmpeg for conversion).</p>
+        <div class="feature-arrow">→</div>
+      </a>
+      <a href="/tts" class="feature-card tts">
+        <div class="feature-icon">🔊</div>
+        <h2>Text to Speech</h2>
+        <p>Type any text and hear it read aloud. Choose from multiple
+           speaker voices (Russian has 5 built-in speakers).</p>
+        <div class="feature-arrow">→</div>
+      </a>
+    </div>
+
+    <div class="card mt-3 fade-in" style="text-align:center; padding: 1.5rem 2rem;">
+      <p style="color:var(--text-m); font-size:.9rem;">
+        <strong>Supported languages:</strong>
+        {% for code, lang in languages.items() %}
+          <span title="{{ lang.name }}">{{ lang.flag }}</span>
+        {% endfor %}
+        &nbsp;|&nbsp;
+        Models are downloaded on first use and cached locally.
+      </p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</body>
+</html>

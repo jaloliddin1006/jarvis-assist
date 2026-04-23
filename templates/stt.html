@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>STT — Mini Jarvis</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="blob-bg">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+
+  <nav class="navbar">
+    <a href="/" class="nav-brand">🎙 Mini Jarvis</a>
+    <div class="nav-links">
+      <a href="/"    class="nav-link">Home</a>
+      <a href="/stt" class="nav-link active">STT</a>
+      <a href="/tts" class="nav-link">TTS</a>
+    </div>
+  </nav>
+
+  <div class="page">
+    <div class="fade-in">
+      <div class="section-title">🎤 Speech to Text</div>
+      <p class="section-sub">Choose a language, then record from your microphone or upload an audio file.</p>
+    </div>
+
+    <!-- Language Picker -->
+    <div class="card fade-in" style="margin-bottom:1.2rem;">
+      <div class="field-label">Language</div>
+      <div class="lang-grid" id="langGrid">
+        {% for code, lang in languages.items() %}
+        <button class="lang-btn {% if code == 'en' %}active{% endif %}"
+                data-lang="{{ code }}" onclick="selectLang(this)">
+          <span class="flag">{{ lang.flag }}</span> {{ lang.name }}
+        </button>
+        {% endfor %}
+      </div>
+      <div id="modelStatus" class="flex-row">
+        <span class="badge badge-yellow" id="statusBadge">⏳ Checking…</span>
+        <button class="btn btn-primary hidden" id="downloadBtn" onclick="downloadModel()">
+          ⬇ Download Model
+        </button>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar-outer"><div class="progress-bar-inner" id="progressBar"></div></div>
+        <div class="progress-msg" id="progressMsg">Starting…</div>
+      </div>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar fade-in">
+      <button class="tab-btn active" id="tabMic"  onclick="switchTab('mic')">🎙 Microphone</button>
+      <button class="tab-btn"        id="tabFile" onclick="switchTab('file')">📁 File Upload</button>
+    </div>
+
+    <!-- Microphone Panel -->
+    <div class="card fade-in" id="panelMic">
+      <div class="record-area">
+        <button class="record-btn" id="recordBtn" onclick="toggleRecord()" disabled>🎙</button>
+        <div class="waveform" id="waveform">
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+        </div>
+        <span id="recordStatus" style="color:var(--text-m);font-size:.9rem;">Press button to start recording</span>
+      </div>
+
+      <div class="field-label mt-2">Transcription</div>
+      <div class="result-box" id="micResult">
+        <em style="color:var(--text-m);">Result will appear here…</em>
+        <button class="copy-btn" onclick="copyText('micResult')" title="Copy">Copy</button>
+      </div>
+      <div class="flex-row mt-2">
+        <button class="btn btn-secondary" onclick="clearResult('micResult')">🗑 Clear</button>
+      </div>
+    </div>
+
+    <!-- File Upload Panel -->
+    <div class="card fade-in hidden" id="panelFile">
+      <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+        <div class="drop-icon">📂</div>
+        <p><strong>Click to browse</strong> or drag & drop audio file here</p>
+        <p style="font-size:.8rem; margin-top:.4rem;">WAV (16kHz mono 16-bit) recommended. Install ffmpeg for auto-conversion.</p>
+      </div>
+      <input type="file" id="fileInput" accept="audio/*" onchange="handleFileSelect(this)" />
+
+      <div id="fileInfo" class="hidden mt-2" style="display:flex;align-items:center;gap:.8rem;background:#F0F4FF;border-radius:10px;padding:.75rem 1rem;">
+        <span style="font-size:1.5rem;">🎵</span>
+        <div>
+          <div id="fileName" style="font-weight:600;font-size:.9rem;"></div>
+          <div id="fileSize" style="font-size:.78rem;color:var(--text-m);"></div>
+        </div>
+      </div>
+
+      <div class="flex-row mt-2">
+        <button class="btn btn-primary" id="transcribeBtn" onclick="transcribeFile()" disabled>
+          ✨ Transcribe
+        </button>
+        <div class="spinner hidden" id="fileSpinner"></div>
+      </div>
+
+      <div class="field-label mt-3">Transcription</div>
+      <div class="result-box" id="fileResult">
+        <em style="color:var(--text-m);">Result will appear here…</em>
+        <button class="copy-btn" onclick="copyText('fileResult')" title="Copy">Copy</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────
+    let currentLang = 'en';
+    let isRecording = false;
+    let ws = null;
+    let audioContext = null;
+    let processor = null;
+    let micStream = null;
+    let selectedFile = null;
+    let downloadTaskId = null;
+    let pollInterval = null;
+    let modelReady = false;
+
+    // ── Language selection ─────────────────────────────────────────────
+    function selectLang(btn) {
+      document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentLang = btn.dataset.lang;
+      checkModel();
+      if (isRecording) stopRecording();
+    }
+
+    // ── Model check & download ─────────────────────────────────────────
+    async function checkModel() {
+      const badge = document.getElementById('statusBadge');
+      const dlBtn = document.getElementById('downloadBtn');
+      badge.className = 'badge badge-yellow';
+      badge.textContent = '⏳ Checking…';
+      dlBtn.classList.add('hidden');
+      modelReady = false;
+      document.getElementById('recordBtn').disabled = true;
+
+      const r = await fetch(`/api/model/check?lang=${currentLang}&type=stt`);
+      const data = await r.json();
+
+      if (!data.available) {
+        badge.className = 'badge badge-red';
+        badge.textContent = '✗ Not supported';
+        return;
+      }
+      if (data.downloaded) {
+        badge.className = 'badge badge-green';
+        badge.textContent = '✓ Model ready';
+        modelReady = true;
+        document.getElementById('recordBtn').disabled = false;
+        if (selectedFile) document.getElementById('transcribeBtn').disabled = false;
+      } else {
+        badge.className = 'badge badge-yellow';
+        badge.textContent = '⬇ Not downloaded';
+        dlBtn.classList.remove('hidden');
+      }
+    }
+
+    async function downloadModel() {
+      const r = await fetch('/api/model/download', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({lang: currentLang, type: 'stt'})
+      });
+      const data = await r.json();
+      if (data.status === 'already_downloaded') { checkModel(); return; }
+      if (data.task_id) {
+        downloadTaskId = data.task_id;
+        document.getElementById('progressWrap').classList.add('visible');
+        document.getElementById('downloadBtn').classList.add('hidden');
+        pollInterval = setInterval(pollProgress, 800);
+      }
+    }
+
+    async function pollProgress() {
+      const r = await fetch(`/api/model/progress/${downloadTaskId}`);
+      const data = await r.json();
+      document.getElementById('progressBar').style.width = data.progress + '%';
+      document.getElementById('progressMsg').textContent = data.message;
+      if (data.status === 'done') {
+        clearInterval(pollInterval);
+        setTimeout(() => {
+          document.getElementById('progressWrap').classList.remove('visible');
+          checkModel();
+        }, 1000);
+      }
+      if (data.status === 'error') {
+        clearInterval(pollInterval);
+        showToast('Download failed: ' + data.message);
+      }
+    }
+
+    // ── Tab switch ─────────────────────────────────────────────────────
+    function switchTab(tab) {
+      const isMic = tab === 'mic';
+      document.getElementById('tabMic').classList.toggle('active', isMic);
+      document.getElementById('tabFile').classList.toggle('active', !isMic);
+      document.getElementById('panelMic').classList.toggle('hidden', !isMic);
+      document.getElementById('panelFile').classList.toggle('hidden', isMic);
+      if (!isMic && isRecording) stopRecording();
+    }
+
+    // ── Microphone recording ───────────────────────────────────────────
+    async function toggleRecord() {
+      if (!modelReady) { showToast('Model not ready yet.'); return; }
+      isRecording ? stopRecording() : startRecording();
+    }
+
+    async function startRecording() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        showToast('Microphone access denied: ' + e.message);
+        return;
+      }
+
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}/ws/stt/${currentLang}`);
+
+      ws.onopen = () => {
+        isRecording = true;
+        const btn = document.getElementById('recordBtn');
+        btn.classList.add('recording');
+        btn.textContent = '⏹';
+        document.getElementById('recordStatus').textContent = 'Recording… (click to stop)';
+        document.getElementById('waveform').classList.add('active');
+        document.getElementById('micResult').innerHTML =
+          '<em style="color:var(--text-m);">Listening…</em><button class="copy-btn" onclick="copyText(\'micResult\')">Copy</button>';
+
+        audioContext = new AudioContext({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(micStream);
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        processor.onaudioprocess = (e) => {
+          if (!isRecording || ws.readyState !== WebSocket.OPEN) return;
+          const f32 = e.inputBuffer.getChannelData(0);
+          const i16 = new Int16Array(f32.length);
+          for (let i = 0; i < f32.length; i++) {
+            i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)));
+          }
+          ws.send(i16.buffer);
+        };
+      };
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'error') { showToast(msg.text); stopRecording(); return; }
+        const el = document.getElementById('micResult');
+        const copyBtn = '<button class="copy-btn" onclick="copyText(\'micResult\')">Copy</button>';
+        if (msg.type === 'partial') {
+          el.className = 'result-box partial';
+          el.innerHTML = (msg.text || '…') + copyBtn;
+        } else if (msg.type === 'final' && msg.text) {
+          el.className = 'result-box';
+          const prev = el.dataset.full || '';
+          el.dataset.full = (prev + ' ' + msg.text).trim();
+          el.innerHTML = el.dataset.full + copyBtn;
+        }
+      };
+
+      ws.onclose = () => { if (isRecording) stopRecording(); };
+      ws.onerror = () => { showToast('WebSocket error.'); stopRecording(); };
+    }
+
+    function stopRecording() {
+      isRecording = false;
+      if (processor) { processor.disconnect(); processor = null; }
+      if (audioContext) { audioContext.close(); audioContext = null; }
+      if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+      ws = null;
+      const btn = document.getElementById('recordBtn');
+      btn.classList.remove('recording');
+      btn.textContent = '🎙';
+      document.getElementById('recordStatus').textContent = 'Press button to start recording';
+      document.getElementById('waveform').classList.remove('active');
+    }
+
+    // ── File upload ────────────────────────────────────────────────────
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+    });
+
+    function handleFileSelect(input) {
+      if (input.files[0]) setFile(input.files[0]);
+    }
+
+    function setFile(file) {
+      selectedFile = file;
+      document.getElementById('fileName').textContent = file.name;
+      document.getElementById('fileSize').textContent = (file.size / 1024).toFixed(1) + ' KB';
+      document.getElementById('fileInfo').classList.remove('hidden');
+      document.getElementById('fileInfo').style.display = 'flex';
+      if (modelReady) document.getElementById('transcribeBtn').disabled = false;
+    }
+
+    async function transcribeFile() {
+      if (!selectedFile || !modelReady) return;
+      const btn = document.getElementById('transcribeBtn');
+      const spinner = document.getElementById('fileSpinner');
+      btn.disabled = true;
+      spinner.classList.remove('hidden');
+      document.getElementById('fileResult').innerHTML =
+        '<em style="color:var(--text-m);">Processing…</em>';
+
+      const form = new FormData();
+      form.append('file', selectedFile);
+      form.append('lang', currentLang);
+
+      try {
+        const r = await fetch('/api/stt/transcribe', { method: 'POST', body: form });
+        const data = await r.json();
+        const copyBtn = '<button class="copy-btn" onclick="copyText(\'fileResult\')">Copy</button>';
+        if (r.ok) {
+          document.getElementById('fileResult').className = 'result-box';
+          document.getElementById('fileResult').innerHTML = (data.text || '(No speech detected)') + copyBtn;
+        } else {
+          document.getElementById('fileResult').innerHTML =
+            `<span style="color:var(--danger)">Error: ${data.detail}</span>` + copyBtn;
+        }
+      } catch (e) {
+        document.getElementById('fileResult').innerHTML =
+          `<span style="color:var(--danger)">Request failed.</span>`;
+      } finally {
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+      }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────
+    function clearResult(id) {
+      const el = document.getElementById(id);
+      el.dataset.full = '';
+      el.innerHTML = '<em style="color:var(--text-m);">Result will appear here…</em>'
+        + '<button class="copy-btn" onclick="copyText(\'' + id + '\')">Copy</button>';
+    }
+
+    function copyText(id) {
+      const el = document.getElementById(id);
+      const text = el.dataset.full || el.innerText.replace('Copy','').trim();
+      navigator.clipboard.writeText(text).then(() => showToast('Copied!'));
+    }
+
+    let toastTimeout;
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────
+    checkModel();
+  </script>
+</body>
+</html>
