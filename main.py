@@ -39,9 +39,7 @@ LANGUAGES: Dict[str, Dict] = {
         "name": "English", "flag": "🇺🇸",
         "stt_model": "vosk-model-small-en-us-0.15",
         "stt_url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
-        "tts_model": "vosk-model-tts-en-0.15",
-        "tts_url": "https://alphacephei.com/vosk/models/vosk-model-tts-en-0.15.zip",
-        "tts_speakers": {0: "Default"},
+        "tts_model": None, "tts_url": None, "tts_speakers": {},
     },
     "ru": {
         "name": "Русский", "flag": "🇷🇺",
@@ -55,9 +53,7 @@ LANGUAGES: Dict[str, Dict] = {
         "name": "Deutsch", "flag": "🇩🇪",
         "stt_model": "vosk-model-small-de-0.15",
         "stt_url": "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip",
-        "tts_model": "vosk-model-tts-de-0.6",
-        "tts_url": "https://alphacephei.com/vosk/models/vosk-model-tts-de-0.6.zip",
-        "tts_speakers": {0: "Default"},
+        "tts_model": None, "tts_url": None, "tts_speakers": {},
     },
     "fr": {
         "name": "Français", "flag": "🇫🇷",
@@ -73,8 +69,8 @@ LANGUAGES: Dict[str, Dict] = {
     },
     "uz": {
         "name": "O'zbek", "flag": "🇺🇿",
-        "stt_model": "vosk-model-uz-0.22",
-        "stt_url": "https://alphacephei.com/vosk/models/vosk-model-uz-0.22.zip",
+        "stt_model": "vosk-model-small-uz-0.22",
+        "stt_url": "https://alphacephei.com/vosk/models/vosk-model-small-uz-0.22.zip",
         "tts_model": None, "tts_url": None, "tts_speakers": {},
     },
     "tr": {
@@ -180,20 +176,20 @@ def _get_tts_synth(lang: str):
 
 @app.get("/")
 async def home(request: Request):
-    return templates.TemplateResponse("home.html",
-                                      {"request": request, "languages": LANGUAGES})
+    return templates.TemplateResponse(request, "home.html",
+                                      {"languages": LANGUAGES})
 
 
 @app.get("/stt")
 async def stt_page(request: Request):
-    return templates.TemplateResponse("stt.html",
-                                      {"request": request, "languages": LANGUAGES})
+    return templates.TemplateResponse(request, "stt.html",
+                                      {"languages": LANGUAGES})
 
 
 @app.get("/tts")
 async def tts_page(request: Request):
-    return templates.TemplateResponse("tts.html",
-                                      {"request": request, "languages": LANGUAGES})
+    return templates.TemplateResponse(request, "tts.html",
+                                      {"languages": LANGUAGES})
 
 
 # ─── API: model management ──────────────────────────────────────────────────────
@@ -367,4 +363,10 @@ async def ws_stt(websocket: WebSocket, lang: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    cert = Path("certs/cert.pem")
+    key  = Path("certs/key.pem")
+    if cert.exists() and key.exists():
+        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True,
+                    ssl_certfile=str(cert), ssl_keyfile=str(key))
+    else:
+        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

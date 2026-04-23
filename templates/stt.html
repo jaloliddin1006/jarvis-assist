@@ -25,7 +25,7 @@
   <div class="page">
     <div class="fade-in">
       <div class="section-title">🎤 Speech to Text</div>
-      <p class="section-sub">Choose a language, then record from your microphone or upload an audio file.</p>
+      <p class="section-sub">Choose a language, then use one of the three modes below.</p>
     </div>
 
     <!-- Language Picker -->
@@ -53,33 +53,77 @@
 
     <!-- Tab bar -->
     <div class="tab-bar fade-in">
-      <button class="tab-btn active" id="tabMic"  onclick="switchTab('mic')">🎙 Microphone</button>
-      <button class="tab-btn"        id="tabFile" onclick="switchTab('file')">📁 File Upload</button>
+      <button class="tab-btn active" id="tabLive"   onclick="switchTab('live')">🔴 Live STT</button>
+      <button class="tab-btn"        id="tabRecord" onclick="switchTab('record')">⏺ Record & Send</button>
+      <button class="tab-btn"        id="tabFile"   onclick="switchTab('file')">📁 File Upload</button>
     </div>
 
-    <!-- Microphone Panel -->
-    <div class="card fade-in" id="panelMic">
+    <!-- ── Panel 1: Live STT (WebSocket streaming) ── -->
+    <div class="card fade-in" id="panelLive">
+      <p style="font-size:.82rem;color:var(--text-m);margin-bottom:1rem;">
+        Audio is streamed to the server in real-time. You get partial results as you speak.
+      </p>
       <div class="record-area">
-        <button class="record-btn" id="recordBtn" onclick="toggleRecord()" disabled>🎙</button>
-        <div class="waveform" id="waveform">
+        <button class="record-btn" id="liveBtn" onclick="toggleLive()" disabled>🎙</button>
+        <div class="waveform" id="liveWaveform">
           <div class="bar"></div><div class="bar"></div><div class="bar"></div>
           <div class="bar"></div><div class="bar"></div><div class="bar"></div>
           <div class="bar"></div><div class="bar"></div><div class="bar"></div>
         </div>
-        <span id="recordStatus" style="color:var(--text-m);font-size:.9rem;">Press button to start recording</span>
+        <span id="liveStatus" style="color:var(--text-m);font-size:.9rem;">Press button to start</span>
       </div>
-
       <div class="field-label mt-2">Transcription</div>
-      <div class="result-box" id="micResult">
+      <div class="result-box" id="liveResult">
         <em style="color:var(--text-m);">Result will appear here…</em>
-        <button class="copy-btn" onclick="copyText('micResult')" title="Copy">Copy</button>
+        <button class="copy-btn" onclick="copyText('liveResult')" title="Copy">Copy</button>
       </div>
       <div class="flex-row mt-2">
-        <button class="btn btn-secondary" onclick="clearResult('micResult')">🗑 Clear</button>
+        <button class="btn btn-secondary" onclick="clearResult('liveResult')">🗑 Clear</button>
       </div>
     </div>
 
-    <!-- File Upload Panel -->
+    <!-- ── Panel 2: Record & Send ── -->
+    <div class="card fade-in hidden" id="panelRecord">
+      <p style="font-size:.82rem;color:var(--text-m);margin-bottom:1rem;">
+        Record your speech locally, then send the full audio for transcription at once.
+      </p>
+      <div class="record-area">
+        <button class="record-btn" id="recBtn" onclick="toggleRecord()" disabled>🎙</button>
+        <div class="waveform" id="recWaveform">
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+          <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+        </div>
+        <span id="recStatus" style="color:var(--text-m);font-size:.9rem;">Press button to start recording</span>
+      </div>
+
+      <!-- recorded audio preview -->
+      <div id="recPreview" class="hidden mt-2" style="display:flex;align-items:center;gap:.8rem;background:#F0F4FF;border-radius:10px;padding:.75rem 1rem;">
+        <span style="font-size:1.5rem;">🎵</span>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:.9rem;" id="recDuration"></div>
+          <audio id="recAudio" controls style="width:100%;margin-top:.4rem;height:32px;"></audio>
+        </div>
+      </div>
+
+      <div class="flex-row mt-2">
+        <button class="btn btn-primary hidden" id="sendRecBtn" onclick="sendRecording()">
+          ✨ Transcribe Recording
+        </button>
+        <button class="btn btn-secondary hidden" id="discardBtn" onclick="discardRecording()">
+          🗑 Discard
+        </button>
+        <div class="spinner hidden" id="recSpinner"></div>
+      </div>
+
+      <div class="field-label mt-3">Transcription</div>
+      <div class="result-box" id="recResult">
+        <em style="color:var(--text-m);">Result will appear here…</em>
+        <button class="copy-btn" onclick="copyText('recResult')" title="Copy">Copy</button>
+      </div>
+    </div>
+
+    <!-- ── Panel 3: File Upload ── -->
     <div class="card fade-in hidden" id="panelFile">
       <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
         <div class="drop-icon">📂</div>
@@ -115,16 +159,30 @@
 
   <script>
     // ── State ──────────────────────────────────────────────────────────
-    let currentLang = 'en';
-    let isRecording = false;
-    let ws = null;
-    let audioContext = null;
-    let processor = null;
-    let micStream = null;
-    let selectedFile = null;
+    let currentLang   = 'en';
+    let modelReady    = false;
     let downloadTaskId = null;
-    let pollInterval = null;
-    let modelReady = false;
+    let pollInterval  = null;
+
+    // Live STT state
+    let liveActive    = false;
+    let liveWs        = null;
+    let liveCtx       = null;
+    let liveProcessor = null;
+    let liveStream    = null;
+
+    // Record & Send state
+    let recActive     = false;
+    let recStream     = null;
+    let recCtx        = null;
+    let recProcessor  = null;
+    let recChunks     = [];   // Int16Array chunks
+    let recBlob       = null;
+    let recSeconds    = 0;
+    let recTimer      = null;
+
+    // File upload state
+    let selectedFile  = null;
 
     // ── Language selection ─────────────────────────────────────────────
     function selectLang(btn) {
@@ -132,7 +190,8 @@
       btn.classList.add('active');
       currentLang = btn.dataset.lang;
       checkModel();
-      if (isRecording) stopRecording();
+      if (liveActive) stopLive();
+      if (recActive)  stopRecording();
     }
 
     // ── Model check & download ─────────────────────────────────────────
@@ -143,31 +202,36 @@
       badge.textContent = '⏳ Checking…';
       dlBtn.classList.add('hidden');
       modelReady = false;
-      document.getElementById('recordBtn').disabled = true;
+      setMicButtons(true);
 
-      const r = await fetch(`/api/model/check?lang=${currentLang}&type=stt`);
+      const r    = await fetch(`/api/model/check?lang=${currentLang}&type=stt`);
       const data = await r.json();
 
       if (!data.available) {
-        badge.className = 'badge badge-red';
+        badge.className   = 'badge badge-red';
         badge.textContent = '✗ Not supported';
         return;
       }
       if (data.downloaded) {
-        badge.className = 'badge badge-green';
+        badge.className   = 'badge badge-green';
         badge.textContent = '✓ Model ready';
         modelReady = true;
-        document.getElementById('recordBtn').disabled = false;
+        setMicButtons(false);
         if (selectedFile) document.getElementById('transcribeBtn').disabled = false;
       } else {
-        badge.className = 'badge badge-yellow';
+        badge.className   = 'badge badge-yellow';
         badge.textContent = '⬇ Not downloaded';
         dlBtn.classList.remove('hidden');
       }
     }
 
+    function setMicButtons(disabled) {
+      document.getElementById('liveBtn').disabled = disabled;
+      document.getElementById('recBtn').disabled  = disabled;
+    }
+
     async function downloadModel() {
-      const r = await fetch('/api/model/download', {
+      const r    = await fetch('/api/model/download', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({lang: currentLang, type: 'stt'})
@@ -183,7 +247,7 @@
     }
 
     async function pollProgress() {
-      const r = await fetch(`/api/model/progress/${downloadTaskId}`);
+      const r    = await fetch(`/api/model/progress/${downloadTaskId}`);
       const data = await r.json();
       document.getElementById('progressBar').style.width = data.progress + '%';
       document.getElementById('progressMsg').textContent = data.message;
@@ -202,92 +266,256 @@
 
     // ── Tab switch ─────────────────────────────────────────────────────
     function switchTab(tab) {
-      const isMic = tab === 'mic';
-      document.getElementById('tabMic').classList.toggle('active', isMic);
-      document.getElementById('tabFile').classList.toggle('active', !isMic);
-      document.getElementById('panelMic').classList.toggle('hidden', !isMic);
-      document.getElementById('panelFile').classList.toggle('hidden', isMic);
-      if (!isMic && isRecording) stopRecording();
+      ['live','record','file'].forEach(t => {
+        document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1))
+                .classList.toggle('active', t === tab);
+        document.getElementById('panel' + t.charAt(0).toUpperCase() + t.slice(1))
+                .classList.toggle('hidden', t !== tab);
+      });
+      if (tab !== 'live'   && liveActive) stopLive();
+      if (tab !== 'record' && recActive)  stopRecording();
     }
 
-    // ── Microphone recording ───────────────────────────────────────────
-    async function toggleRecord() {
+    // ── Helpers: secure context check ─────────────────────────────────
+    function checkSecureContext() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast('⚠ Microphone requires HTTPS. Open the site via https:// instead of http://');
+        return false;
+      }
+      return true;
+    }
+
+    // ── WAV encoder (browser-side, no ffmpeg needed) ───────────────────
+    function buildWav(int16Chunks, sampleRate) {
+      const totalSamples = int16Chunks.reduce((s, c) => s + c.length, 0);
+      const dataBytes    = totalSamples * 2;
+      const buf          = new ArrayBuffer(44 + dataBytes);
+      const v            = new DataView(buf);
+      const ws           = (str, off) => { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); };
+      ws('RIFF', 0);  v.setUint32(4,  36 + dataBytes, true);
+      ws('WAVE', 8);  ws('fmt ', 12);
+      v.setUint32(16, 16, true);
+      v.setUint16(20, 1,          true);  // PCM
+      v.setUint16(22, 1,          true);  // mono
+      v.setUint32(24, sampleRate, true);
+      v.setUint32(28, sampleRate * 2, true);
+      v.setUint16(32, 2,          true);
+      v.setUint16(34, 16,         true);
+      ws('data', 36); v.setUint32(40, dataBytes, true);
+      const out = new Int16Array(buf, 44);
+      let offset = 0;
+      for (const chunk of int16Chunks) { out.set(chunk, offset); offset += chunk.length; }
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+
+    // ── LIVE STT (WebSocket streaming) ────────────────────────────────
+    function toggleLive() {
       if (!modelReady) { showToast('Model not ready yet.'); return; }
-      isRecording ? stopRecording() : startRecording();
+      liveActive ? stopLive() : startLive();
     }
 
-    async function startRecording() {
+    async function startLive() {
+      if (!checkSecureContext()) return;
       try {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        liveStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       } catch (e) {
-        showToast('Microphone access denied: ' + e.message);
+        showToast(e.name === 'NotAllowedError'
+          ? 'Microphone permission denied. Allow it in browser settings.'
+          : 'Microphone error: ' + e.message);
         return;
       }
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${location.host}/ws/stt/${currentLang}`);
+      liveWs = new WebSocket(`${proto}://${location.host}/ws/stt/${currentLang}`);
 
-      ws.onopen = () => {
-        isRecording = true;
-        const btn = document.getElementById('recordBtn');
+      liveWs.onopen = () => {
+        liveActive = true;
+        const btn = document.getElementById('liveBtn');
         btn.classList.add('recording');
         btn.textContent = '⏹';
-        document.getElementById('recordStatus').textContent = 'Recording… (click to stop)';
-        document.getElementById('waveform').classList.add('active');
-        document.getElementById('micResult').innerHTML =
-          '<em style="color:var(--text-m);">Listening…</em><button class="copy-btn" onclick="copyText(\'micResult\')">Copy</button>';
+        document.getElementById('liveStatus').textContent = 'Recording… (click to stop)';
+        document.getElementById('liveWaveform').classList.add('active');
+        document.getElementById('liveResult').innerHTML =
+          '<em style="color:var(--text-m);">Listening…</em><button class="copy-btn" onclick="copyText(\'liveResult\')">Copy</button>';
 
-        audioContext = new AudioContext({ sampleRate: 16000 });
-        const source = audioContext.createMediaStreamSource(micStream);
-        processor = audioContext.createScriptProcessor(4096, 1, 1);
-        source.connect(processor);
-        processor.connect(audioContext.destination);
-        processor.onaudioprocess = (e) => {
-          if (!isRecording || ws.readyState !== WebSocket.OPEN) return;
+        liveCtx = new AudioContext({ sampleRate: 16000 });
+        const source = liveCtx.createMediaStreamSource(liveStream);
+        liveProcessor = liveCtx.createScriptProcessor(4096, 1, 1);
+        source.connect(liveProcessor);
+        liveProcessor.connect(liveCtx.destination);
+        liveProcessor.onaudioprocess = (e) => {
+          if (!liveActive || liveWs.readyState !== WebSocket.OPEN) return;
           const f32 = e.inputBuffer.getChannelData(0);
           const i16 = new Int16Array(f32.length);
-          for (let i = 0; i < f32.length; i++) {
+          for (let i = 0; i < f32.length; i++)
             i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)));
-          }
-          ws.send(i16.buffer);
+          liveWs.send(i16.buffer);
         };
       };
 
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'error') { showToast(msg.text); stopRecording(); return; }
-        const el = document.getElementById('micResult');
-        const copyBtn = '<button class="copy-btn" onclick="copyText(\'micResult\')">Copy</button>';
+      liveWs.onmessage = (e) => {
+        const msg    = JSON.parse(e.data);
+        if (msg.type === 'error') { showToast(msg.text); stopLive(); return; }
+        const el     = document.getElementById('liveResult');
+        const cpyBtn = '<button class="copy-btn" onclick="copyText(\'liveResult\')">Copy</button>';
         if (msg.type === 'partial') {
           el.className = 'result-box partial';
-          el.innerHTML = (msg.text || '…') + copyBtn;
+          el.innerHTML = (msg.text || '…') + cpyBtn;
         } else if (msg.type === 'final' && msg.text) {
           el.className = 'result-box';
           const prev = el.dataset.full || '';
           el.dataset.full = (prev + ' ' + msg.text).trim();
-          el.innerHTML = el.dataset.full + copyBtn;
+          el.innerHTML = el.dataset.full + cpyBtn;
         }
       };
 
-      ws.onclose = () => { if (isRecording) stopRecording(); };
-      ws.onerror = () => { showToast('WebSocket error.'); stopRecording(); };
+      liveWs.onclose = () => { if (liveActive) stopLive(); };
+      liveWs.onerror = () => { showToast('WebSocket error.'); stopLive(); };
+    }
+
+    function stopLive() {
+      liveActive = false;
+      if (liveProcessor) { liveProcessor.disconnect(); liveProcessor = null; }
+      if (liveCtx)       { liveCtx.close(); liveCtx = null; }
+      if (liveStream)    { liveStream.getTracks().forEach(t => t.stop()); liveStream = null; }
+      if (liveWs && liveWs.readyState === WebSocket.OPEN) liveWs.close();
+      liveWs = null;
+      const btn = document.getElementById('liveBtn');
+      btn.classList.remove('recording');
+      btn.textContent = '🎙';
+      document.getElementById('liveStatus').textContent = 'Press button to start';
+      document.getElementById('liveWaveform').classList.remove('active');
+    }
+
+    // ── RECORD & SEND ─────────────────────────────────────────────────
+    function toggleRecord() {
+      if (!modelReady) { showToast('Model not ready yet.'); return; }
+      recActive ? stopRecording() : startRecording();
+    }
+
+    async function startRecording() {
+      if (!checkSecureContext()) return;
+      try {
+        recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        showToast(e.name === 'NotAllowedError'
+          ? 'Microphone permission denied. Allow it in browser settings.'
+          : 'Microphone error: ' + e.message);
+        return;
+      }
+
+      recChunks  = [];
+      recSeconds = 0;
+      recBlob    = null;
+      document.getElementById('recPreview').classList.add('hidden');
+      document.getElementById('recPreview').style.display = '';
+      document.getElementById('sendRecBtn').classList.add('hidden');
+      document.getElementById('discardBtn').classList.add('hidden');
+
+      recCtx = new AudioContext({ sampleRate: 16000 });
+      const source = recCtx.createMediaStreamSource(recStream);
+      recProcessor = recCtx.createScriptProcessor(4096, 1, 1);
+      source.connect(recProcessor);
+      recProcessor.connect(recCtx.destination);
+      recProcessor.onaudioprocess = (e) => {
+        if (!recActive) return;
+        const f32 = e.inputBuffer.getChannelData(0);
+        const i16 = new Int16Array(f32.length);
+        for (let i = 0; i < f32.length; i++)
+          i16[i] = Math.max(-32768, Math.min(32767, Math.round(f32[i] * 32767)));
+        recChunks.push(i16);
+      };
+
+      recActive = true;
+      const btn = document.getElementById('recBtn');
+      btn.classList.add('recording');
+      btn.textContent = '⏹';
+      document.getElementById('recWaveform').classList.add('active');
+      document.getElementById('recStatus').textContent = '0s — click to stop';
+
+      recTimer = setInterval(() => {
+        recSeconds++;
+        document.getElementById('recStatus').textContent = `${recSeconds}s — click to stop`;
+      }, 1000);
     }
 
     function stopRecording() {
-      isRecording = false;
-      if (processor) { processor.disconnect(); processor = null; }
-      if (audioContext) { audioContext.close(); audioContext = null; }
-      if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
-      ws = null;
-      const btn = document.getElementById('recordBtn');
+      recActive = false;
+      clearInterval(recTimer);
+      if (recProcessor) { recProcessor.disconnect(); recProcessor = null; }
+      if (recCtx)       { recCtx.close(); recCtx = null; }
+      if (recStream)    { recStream.getTracks().forEach(t => t.stop()); recStream = null; }
+
+      const btn = document.getElementById('recBtn');
       btn.classList.remove('recording');
       btn.textContent = '🎙';
-      document.getElementById('recordStatus').textContent = 'Press button to start recording';
-      document.getElementById('waveform').classList.remove('active');
+      document.getElementById('recWaveform').classList.remove('active');
+
+      if (recChunks.length === 0) {
+        document.getElementById('recStatus').textContent = 'Press button to start recording';
+        return;
+      }
+
+      recBlob = buildWav(recChunks, 16000);
+      recChunks = [];
+
+      const url = URL.createObjectURL(recBlob);
+      document.getElementById('recAudio').src = url;
+      document.getElementById('recDuration').textContent = `Recording — ${recSeconds}s`;
+      const preview = document.getElementById('recPreview');
+      preview.classList.remove('hidden');
+      preview.style.display = 'flex';
+      document.getElementById('sendRecBtn').classList.remove('hidden');
+      document.getElementById('discardBtn').classList.remove('hidden');
+      document.getElementById('recStatus').textContent = 'Recording ready — review and transcribe';
     }
 
-    // ── File upload ────────────────────────────────────────────────────
+    async function sendRecording() {
+      if (!recBlob) return;
+      const btn     = document.getElementById('sendRecBtn');
+      const spinner = document.getElementById('recSpinner');
+      btn.disabled  = true;
+      spinner.classList.remove('hidden');
+      document.getElementById('recResult').innerHTML =
+        '<em style="color:var(--text-m);">Processing…</em>';
+
+      const form = new FormData();
+      form.append('file', recBlob, 'recording.wav');
+      form.append('lang', currentLang);
+
+      try {
+        const r    = await fetch('/api/stt/transcribe', { method: 'POST', body: form });
+        const data = await r.json();
+        const cpyBtn = '<button class="copy-btn" onclick="copyText(\'recResult\')">Copy</button>';
+        if (r.ok) {
+          document.getElementById('recResult').className = 'result-box';
+          document.getElementById('recResult').innerHTML = (data.text || '(No speech detected)') + cpyBtn;
+        } else {
+          document.getElementById('recResult').innerHTML =
+            `<span style="color:var(--danger)">Error: ${data.detail}</span>` + cpyBtn;
+        }
+      } catch {
+        document.getElementById('recResult').innerHTML =
+          '<span style="color:var(--danger)">Request failed.</span>';
+      } finally {
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+      }
+    }
+
+    function discardRecording() {
+      recBlob = null;
+      recChunks = [];
+      document.getElementById('recPreview').classList.add('hidden');
+      document.getElementById('sendRecBtn').classList.add('hidden');
+      document.getElementById('discardBtn').classList.add('hidden');
+      document.getElementById('recStatus').textContent = 'Press button to start recording';
+      document.getElementById('recResult').innerHTML =
+        '<em style="color:var(--text-m);">Result will appear here…</em>'
+        + '<button class="copy-btn" onclick="copyText(\'recResult\')">Copy</button>';
+    }
+
+    // ── File Upload ────────────────────────────────────────────────────
     const dropZone = document.getElementById('dropZone');
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
@@ -297,24 +525,23 @@
       if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
     });
 
-    function handleFileSelect(input) {
-      if (input.files[0]) setFile(input.files[0]);
-    }
+    function handleFileSelect(input) { if (input.files[0]) setFile(input.files[0]); }
 
     function setFile(file) {
       selectedFile = file;
       document.getElementById('fileName').textContent = file.name;
       document.getElementById('fileSize').textContent = (file.size / 1024).toFixed(1) + ' KB';
-      document.getElementById('fileInfo').classList.remove('hidden');
-      document.getElementById('fileInfo').style.display = 'flex';
+      const fi = document.getElementById('fileInfo');
+      fi.classList.remove('hidden');
+      fi.style.display = 'flex';
       if (modelReady) document.getElementById('transcribeBtn').disabled = false;
     }
 
     async function transcribeFile() {
       if (!selectedFile || !modelReady) return;
-      const btn = document.getElementById('transcribeBtn');
+      const btn     = document.getElementById('transcribeBtn');
       const spinner = document.getElementById('fileSpinner');
-      btn.disabled = true;
+      btn.disabled  = true;
       spinner.classList.remove('hidden');
       document.getElementById('fileResult').innerHTML =
         '<em style="color:var(--text-m);">Processing…</em>';
@@ -324,19 +551,19 @@
       form.append('lang', currentLang);
 
       try {
-        const r = await fetch('/api/stt/transcribe', { method: 'POST', body: form });
+        const r    = await fetch('/api/stt/transcribe', { method: 'POST', body: form });
         const data = await r.json();
-        const copyBtn = '<button class="copy-btn" onclick="copyText(\'fileResult\')">Copy</button>';
+        const cpyBtn = '<button class="copy-btn" onclick="copyText(\'fileResult\')">Copy</button>';
         if (r.ok) {
           document.getElementById('fileResult').className = 'result-box';
-          document.getElementById('fileResult').innerHTML = (data.text || '(No speech detected)') + copyBtn;
+          document.getElementById('fileResult').innerHTML = (data.text || '(No speech detected)') + cpyBtn;
         } else {
           document.getElementById('fileResult').innerHTML =
-            `<span style="color:var(--danger)">Error: ${data.detail}</span>` + copyBtn;
+            `<span style="color:var(--danger)">Error: ${data.detail}</span>` + cpyBtn;
         }
-      } catch (e) {
+      } catch {
         document.getElementById('fileResult').innerHTML =
-          `<span style="color:var(--danger)">Request failed.</span>`;
+          '<span style="color:var(--danger)">Request failed.</span>';
       } finally {
         btn.disabled = false;
         spinner.classList.add('hidden');
@@ -348,11 +575,11 @@
       const el = document.getElementById(id);
       el.dataset.full = '';
       el.innerHTML = '<em style="color:var(--text-m);">Result will appear here…</em>'
-        + '<button class="copy-btn" onclick="copyText(\'' + id + '\')">Copy</button>';
+        + `<button class="copy-btn" onclick="copyText('${id}')">Copy</button>`;
     }
 
     function copyText(id) {
-      const el = document.getElementById(id);
+      const el   = document.getElementById(id);
       const text = el.dataset.full || el.innerText.replace('Copy','').trim();
       navigator.clipboard.writeText(text).then(() => showToast('Copied!'));
     }
@@ -363,7 +590,7 @@
       t.textContent = msg;
       t.classList.add('show');
       clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => t.classList.remove('show'), 3000);
+      toastTimeout = setTimeout(() => t.classList.remove('show'), 3500);
     }
 
     // ── Init ───────────────────────────────────────────────────────────
