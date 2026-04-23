@@ -1,5 +1,5 @@
 Loyiha tuzilmasi
-
+```
 mini-jarvis/
 ├── main.py              ← FastAPI backend
 ├── requirements.txt
@@ -12,13 +12,17 @@ mini-jarvis/
     ├── home.html        ← asosiy sahifa
     ├── stt.html         ← mikrofon + fayl yuklash
     └── tts.html         ← matn → ovoz
-Ishga tushirish
+```
 
-cd e:/GitHub/mini-jarvis
-pip install -r requirements.txt
-python main.py
-# → http://localhost:8000
-Imkoniyatlar
+## Ishga tushirish
+
+ `cd e:/GitHub/mini-jarvis`
+ `pip install -r requirements.txt`
+ `python main.py`
+ ` → http://localhost:8000`
+
+## Imkoniyatlar
+```
 STT	TTS
 🇺🇸 English	✓	✓ (1 speaker)
 🇷🇺 Russian	✓	✓ 5 speaker (Aidar, Baya, Kseniya, Xenia, Eugene)
@@ -28,12 +32,15 @@ STT	TTS
 🇺🇿 Uzbek	✓	—
 🇹🇷 Turkish	✓	—
 🇨🇳 Chinese	✓	—
-STT sahifasi:
+```
+
+## STT sahifasi:
 
 Til tanlash → model yo'q bo'lsa avtomatik yuklab oladi (progress bar bilan)
 Mikrofon: real-vaqt WebSocket transkriptsiya (ovoz yozilayotganda matn chiqadi)
 Fayl yuklash: WAV/MP3/OGG yuklash, ffmpeg o'rnatilgan bo'lsa avtomatik konvertatsiya
-TTS sahifasi:
+
+## TTS sahifasi:
 
 Til va speaker tanlash
 Matn yozish → "Synthesize" → HTML5 audio player'da ijro etadi
